@@ -373,44 +373,84 @@ manager 臂把同一归约作为 plan 提交到 `plan.md` 再让 worker 实现�
 
 ## 8. 待办 / 下一步
 
-### 已就绪：订阅制跑 Claude Code 两臂
+### 已就绪：agent 层 A/B（Claude Code 自己的 loop vs 论文的 manager）
 
-脚本：**`codebase/v2-current/escalation/run_bench_script/run_claudecode_sub_5pass.sh`**
+这是核心实验 —— **模型固定，只换 agent 层**：
+
+| | agent 层 | 由谁组织工作 |
+|---|---|---|
+| **A** | `--engine ccagent` | **Claude Code 自己的 loop**：`claude -p` + 工具 + 多轮，自主决策 |
+| **B** | `--engine multiagent` | **论文的 v2 manager/worker 脚手架**（ledger workspace） |
+| **C** | `--engine single` | 一次调用、无工具 —— 论文基线，用来把 A/B 锚回已发表的表 |
+
+新增两个文件：
+
+- **`escalation/ccagent.py`** —— 新引擎，签名与 `multiagent_solve()`/`single_solve()` 完全一致，
+  所以能直接插进 `run_bench.py` 的同一个调用点。
+- **`escalation/run_bench_script/run_agentloop_ab.sh`** —— 驱动 2×N 矩阵并打出对比表。
 
 ```bash
-N=5 PASSES=1 ARMS=single ./run_claudecode_sub_5pass.sh    # 冒烟，先验证链路
-CC_MODEL=opus ./run_claudecode_sub_5pass.sh               # 完整 5 pass × {single, manager}
+# 先冒烟
+N=3 PASSES=1 MODELS=opus LAYERS="single ccagent" ./run_agentloop_ab.sh
+# 完整
+MODELS="opus fable" LAYERS="single multiagent ccagent" ./run_agentloop_ab.sh
 ```
 
-**为什么这条路可比性最好**：走 `MULTIAGENT_MODEL="claude:<alias>"` →
-`orchestrator.claude_cli_chat()` → `claude -p --tools "" --model <alias>`，
-用的是**订阅 auth，不需要 API key**；同时复用 `run_bench.py`、同一份
-`lcb100_hardest_v6.json`、同一套 v2 脚手架参数（`MAX_ITERS=10`、`MAX_TASKS=12`）、
-同一个 code extraction 与修复后的 evaluator。产出的两个数可以直接填进 §2 总表的
-Single / Manager 两列。
+**A 与 B 之间被刻意held住不变的**：题面（`run_bench.py` 把同一个 `build_code_prompt(prob)`
+交给两者）、100 道题及其顺序、任务框架（`spec["solver_system"]` 原样前置）、返回契约
+（```python fence，同一个 `extract_code(..., LMStyle.ClaudeCode)`）、评分、状态分类、regrade。
+**唯一的差别就是谁来组织工作。**
 
-**三条不可比之处（CLI 强制，非选择）**，必须随数字一起标注：
+**A 必然与其它臂不同的四点**，出数时必须一起标注：
 
-1. **输出 cap 不可控。** `claude -p` 不暴露 `max_tokens`，`ESCALATION_CLOUD_MAX_TOKENS`
-   在这条路上**无效**（见 `claude_cli_chat` docstring）。§2.1 其余各臂都钉在 128k，
-   这条不是。**这是最大的缺口 —— 不要把它放进"128k cap"那一列而不加脚注。**
-2. **thinking 既不可开关也不可读。** 此传输层无 reasoning 旋钮；CLI 返回的 thinking block
-   文本为空、只有 signature，所以只能记录 `meta.thinking_blocks`（想了几块），
-   记不到想了什么 —— 比 Fable 5 / Opus-5 的"摘要"还弱一档。
-3. **temperature 不适用。** 其余各臂 0.2；CLI 不接受该参数。
+1. **交付契约是额外加的。** 带工具的 agent 必须被告知答案放哪，所以 `DELIVERY_CONTRACT`
+   会追加到 system prompt。manager 臂不需要这段文字（脚手架自己写 `solution.py`）。
+   这是唯一的 prompt 不对称，无法避免，因此写得尽量短。
+2. **无输出 cap、无 reasoning 开关、无 temperature。** `claude -p` 三者都不暴露。
+   §2.1 各臂都钉在 128k，A 不是。
+3. **A 能执行代码。** 它有 Bash，可以拿题面里的样例自测。v2 脚手架的 verifier 也做同样的事，
+   所以 **A vs B 是公平配对**；但 **A vs C 不是** —— C 什么都跑不了。
+4. **轮数预算是 CLI 自己的**，不是 `MULTIAGENT_MAX_ITERS`。受 CLI 的 loop 和
+   `CCAGENT_WALL_SECONDS` 约束。
 
-**脚本内置的四道闸**（都是实测出来的坑）：
+#### 三个模型怎么放进 A
 
-- **`ANTHROPIC_API_KEY` 会被主动 unset。** 环境里存在这个 key 时，CLI 会转为 **API 计费**
-  而不是订阅 —— 与本脚本的目的正好相反。同时清掉 `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_BASE_URL`。
-- **`n_infra` 检查，而不只是 id 检查。** `run_bench.py` 把 infra 失败的记录**保留在
-  `records` 里**、但从 pass@1 的分母中剔除（`run_bench.py:176-186`）。所以配额被限流时，
-  100 个 id 一个不少、id 检查照样通过，而 pass@1 其实是在更少的题上算的 ——
-  **一个静默错误的分母**。脚本查 `n_infra`，非零即报警并要求重跑该 pass。
-- **崩溃残留文件不会被当成"已完成"跳过。** 失败的 pass 会留下
-  `{"engine":..,"model":..}` 且无 `lcb` 键的残file；脚本对每个已存在的输出先跑 `check()`，
-  验不过就删掉重跑，并在结尾以非零退出码汇报失败数。
-- **`LiveCodeBench` 符号链接自举**（见下）。
+- **Opus / Fable**：`CCAGENT_MODEL=opus|fable`，订阅 auth，**不需要 API key**。
+- **Qwen**：layer A 只能通过 **Anthropic 兼容代理**接非 Anthropic 模型 ——
+  `ANTHROPIC_BASE_URL` 指向 litellm（`claude_code_runner.py` 里的 `LITELLM_ENV` 就是这么做的，
+  代理在 `:8216`）。脚本 `route()` 里的 `qwen` 行已经搭好，**用之前需要填自己的地址**。
+  layer B/C 则走 orchestrator 原有的 `MULTIAGENT_MODEL` 前缀，两条路指向同一个 vLLM。
+
+#### 实测出来的坑（脚本已内置拦截）
+
+**必须以普通用户身份跑，不能用 root。** layer A 需要
+`--permission-mode bypassPermissions`，agent 才能执行自己写的代码；**CLI 在 root/sudo 下
+拒绝该模式**。
+
+**不要用 `acceptEdits` 绕过。** 这是实测不是猜测：root + `acceptEdits` 下，agent
+写出了 `solution.py`，但 **Bash 被拒绝 3 次**，最终消息自己承认
+*"The verification step did not run"*。也就是说 agent 拿不到工具、验证不了 ——
+**layer A 会静默退化成一个慢速单次调用**，而分数照样产出。这是本次最危险的一个坑。
+
+拦截方式：`ccagent.py` 从 result 事件里抓 `permission_denials`，逐题写进
+`status_out["permission_denied"]`；`run_bench.py` 把它持久化进 record；
+驱动脚本的 `check()` 只要发现任何一题有 denial 就**判该 pass 不合格并要求重跑**。
+`preflight()` 另外在 root + bypassPermissions 组合下直接拒跑。
+
+顺带：result 事件还带 `total_cost_usd` 和 `modelUsage`，脚本会把每个 pass 的成本汇总打出来
+（论文其它臂有成本列，这样 A 也能有）。
+
+#### 已验证到什么程度
+
+- **`ccagent_solve()` 真跑通了一次完整 agent loop**（`claude 2.1.250`，`opus`）：
+  5 turns、1 个 thinking block、写出 `solution.py`、`extract_code` 提取一致、
+  提取出的代码实跑 `3 4` → `7`。
+- denial 捕获实测触发（3 次 Bash 拒绝被正确记录并告警）。
+- `check()` 的六种失败态全部实测：id 不符 / `n_infra`≠0 / 有 denial / 崩溃残file /
+  坏 JSON / 文件不存在。
+- root 守卫实测：带 `ccagent` 时拒跑，只跑 `single` 时不拦。
+- 汇总表渲染用合成数据验证过。
+- **未做完整跑通**：本容器缺 `datasets`，且是 root（layer A 必然被拒）。
 
 ### 本包的一个打包 bug：`LiveCodeBench` 路径对不上
 
@@ -441,22 +481,21 @@ LCB_CLAUDE_REAL=1 LCB_CLAUDE_MODE=agentic LCB_CLAUDE_MODEL=<model> \
   python -m lcb_runner.runner.main --model claude-real-agentic --release_version release_v6 ...
 ```
 
-注意上面那个脚本测的**不是** Claude Code 自己的 agent loop：`claude_cli_chat()` 用
-`--tools ""` 把 CLI 当成一个单轮补全通道，agent 那一层由**论文自己的 v2 manager 脚手架**提供。
-这正是可比性最好的组合 —— 它填的是"Anthropic 模型 + 论文脚手架"这个格子。
+`run_claudecode_sub_5pass.sh`（上一版脚本）仍然可用，但它只覆盖 layer B/C ——
+`claude_cli_chat()` 用 `--tools ""` 把 CLI 当单轮补全通道，agent 那层来自论文脚手架。
+**`run_agentloop_ab.sh` 是它的超集**，三个 layer 一起跑，要做 A/B 用后者。
 
-**想测 CLI 自带的 agent loop 则是另一件事**，阻塞点也不同：那要走
-`claude_code_runner.py` + LCB 官方 runner，而官方 runner **没有 `--ids-file`**
-（`run_bench.py:130-132` 的固定 id 逻辑是 escalation 独有的）。不把题目集对齐，
-数字无法与 85→91 / 87.4 / 86.4 直接比。要补就得给官方 runner 打一个 `--ids-file` 补丁。
+`codebase/livecodebench/.../claude_code_runner.py`（那个未收录实验的 runner）**没有被采用**：
+它走 LCB 官方 runner，而官方 runner 没有 `--ids-file`（固定 id 逻辑是 escalation 独有的，
+`run_bench.py:130-132`），题目集对不齐则数字无法与 85→91 / 87.4 / 86.4 比。
+`ccagent.py` 绕开了这个问题 —— 把 agent loop 直接做成 escalation 的一个 engine，
+于是复用了固定 id、题面、评分的全套。它的 `DELIVERY_CONTRACT` 思路借自
+`claude_code_runner.py` 的 `AGENTIC_CONTRACT`，但刻意写得更短：
+后者把"枚举边界情况、写 brute-force 做 stress test"等**解题方法**写进了 prompt，
+那会让 A 拿到 B 没有的指导；`ccagent.py` 只保留"答案写进 `solution.py`"这一条交付约定，
+解题方法一律留给两边共享的 `spec["solver_system"]`。
 
-两条路测的是不同的东西，别混为一谈：
-| | 脚本 | agent 层来自 | 可直接填进 §2 总表？ |
-|---|---|---|---|
-| A（已就绪） | `run_claudecode_sub_5pass.sh` | 论文 v2 manager 脚手架 | **可以**（加 cap 脚注） |
-| B（待打补丁） | `claude_code_runner.py` | Claude Code CLI 自身 | 需先对齐题目集 |
-
-**其他可补的**：
+**其他可补的**：**其他可补的**：
 - Opus-5 在 **v2** 脚手架上重跑，并做 5 pass —— 现有的 85→91 是 v1 + 1 pass，是全表最弱的证据。
 - Fable 5 的 manager 臂。论文 §4.5 自己承认：它是 *"the strongest single-call result in the paper
   is also the one condition where we cannot say what the scaffold would do."*
