@@ -373,6 +373,62 @@ manager 臂把同一归约作为 plan 提交到 `plan.md` 再让 worker 实现�
 
 ## 8. 待办 / 下一步
 
+### 已就绪：订阅制跑 Claude Code 两臂
+
+脚本：**`codebase/v2-current/escalation/run_bench_script/run_claudecode_sub_5pass.sh`**
+
+```bash
+N=5 PASSES=1 ARMS=single ./run_claudecode_sub_5pass.sh    # 冒烟，先验证链路
+CC_MODEL=opus ./run_claudecode_sub_5pass.sh               # 完整 5 pass × {single, manager}
+```
+
+**为什么这条路可比性最好**：走 `MULTIAGENT_MODEL="claude:<alias>"` →
+`orchestrator.claude_cli_chat()` → `claude -p --tools "" --model <alias>`，
+用的是**订阅 auth，不需要 API key**；同时复用 `run_bench.py`、同一份
+`lcb100_hardest_v6.json`、同一套 v2 脚手架参数（`MAX_ITERS=10`、`MAX_TASKS=12`）、
+同一个 code extraction 与修复后的 evaluator。产出的两个数可以直接填进 §2 总表的
+Single / Manager 两列。
+
+**三条不可比之处（CLI 强制，非选择）**，必须随数字一起标注：
+
+1. **输出 cap 不可控。** `claude -p` 不暴露 `max_tokens`，`ESCALATION_CLOUD_MAX_TOKENS`
+   在这条路上**无效**（见 `claude_cli_chat` docstring）。§2.1 其余各臂都钉在 128k，
+   这条不是。**这是最大的缺口 —— 不要把它放进"128k cap"那一列而不加脚注。**
+2. **thinking 既不可开关也不可读。** 此传输层无 reasoning 旋钮；CLI 返回的 thinking block
+   文本为空、只有 signature，所以只能记录 `meta.thinking_blocks`（想了几块），
+   记不到想了什么 —— 比 Fable 5 / Opus-5 的"摘要"还弱一档。
+3. **temperature 不适用。** 其余各臂 0.2；CLI 不接受该参数。
+
+**脚本内置的四道闸**（都是实测出来的坑）：
+
+- **`ANTHROPIC_API_KEY` 会被主动 unset。** 环境里存在这个 key 时，CLI 会转为 **API 计费**
+  而不是订阅 —— 与本脚本的目的正好相反。同时清掉 `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_BASE_URL`。
+- **`n_infra` 检查，而不只是 id 检查。** `run_bench.py` 把 infra 失败的记录**保留在
+  `records` 里**、但从 pass@1 的分母中剔除（`run_bench.py:176-186`）。所以配额被限流时，
+  100 个 id 一个不少、id 检查照样通过，而 pass@1 其实是在更少的题上算的 ——
+  **一个静默错误的分母**。脚本查 `n_infra`，非零即报警并要求重跑该 pass。
+- **崩溃残留文件不会被当成"已完成"跳过。** 失败的 pass 会留下
+  `{"engine":..,"model":..}` 且无 `lcb` 键的残file；脚本对每个已存在的输出先跑 `check()`，
+  验不过就删掉重跑，并在结尾以非零退出码汇报失败数。
+- **`LiveCodeBench` 符号链接自举**（见下）。
+
+### 本包的一个打包 bug：`LiveCodeBench` 路径对不上
+
+`run_bench.py:16-19`、`regrade.py:21`、`capmatch_q38.py:31` 都做
+`sys.path.insert(0, <escalation 的父目录>/LiveCodeBench)`，
+但本包把 harness 放在 `codebase/livecodebench/`（**小写、且高一层**）。
+Linux 下大小写敏感 —— **README §4 里的每一条复现命令都会当场 `ImportError: lcb_runner`。**
+
+一行修复（脚本已自动做，幂等）：
+
+```bash
+ln -s ../livecodebench codebase/v2-current/LiveCodeBench
+```
+
+v1 若也要跑，同样需要 `ln -s ../livecodebench codebase/v1-be9dfa2/LiveCodeBench`。
+
+### 仍然待办
+
 **要补的那个格子：Claude Code (CLI agent) on LCB-100 hard。**
 
 `claude_code_runner.py` 就是干这个的，且跑的是**同一份修过 evaluator 的 harness**
@@ -385,13 +441,20 @@ LCB_CLAUDE_REAL=1 LCB_CLAUDE_MODE=agentic LCB_CLAUDE_MODEL=<model> \
   python -m lcb_runner.runner.main --model claude-real-agentic --release_version release_v6 ...
 ```
 
-**先要解决的阻塞**：官方 LCB runner **没有 `--ids-file`**，而 escalation 那条路有
-（`lcb100_hardest_v6.json`）。不把题目集对齐，跑出来的数仍无法与 85→91 / 87.4 / 86.4 直接比。
+注意上面那个脚本测的**不是** Claude Code 自己的 agent loop：`claude_cli_chat()` 用
+`--tools ""` 把 CLI 当成一个单轮补全通道，agent 那一层由**论文自己的 v2 manager 脚手架**提供。
+这正是可比性最好的组合 —— 它填的是"Anthropic 模型 + 论文脚手架"这个格子。
 
-两个选项：
-1. 给官方 runner 打一个 `--ids-file` 补丁（改动小，推荐）；
-2. 在 `orchestrator.py` 里用 `claude:` 前缀走 `claude_cli_chat()` ——
-   但那只是单次 CLI 调用，**不是 agentic 模式**，拿不到工具 + 多轮的效果。
+**想测 CLI 自带的 agent loop 则是另一件事**，阻塞点也不同：那要走
+`claude_code_runner.py` + LCB 官方 runner，而官方 runner **没有 `--ids-file`**
+（`run_bench.py:130-132` 的固定 id 逻辑是 escalation 独有的）。不把题目集对齐，
+数字无法与 85→91 / 87.4 / 86.4 直接比。要补就得给官方 runner 打一个 `--ids-file` 补丁。
+
+两条路测的是不同的东西，别混为一谈：
+| | 脚本 | agent 层来自 | 可直接填进 §2 总表？ |
+|---|---|---|---|
+| A（已就绪） | `run_claudecode_sub_5pass.sh` | 论文 v2 manager 脚手架 | **可以**（加 cap 脚注） |
+| B（待打补丁） | `claude_code_runner.py` | Claude Code CLI 自身 | 需先对齐题目集 |
 
 **其他可补的**：
 - Opus-5 在 **v2** 脚手架上重跑，并做 5 pass —— 现有的 85→91 是 v1 + 1 pass，是全表最弱的证据。
