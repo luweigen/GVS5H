@@ -36,47 +36,84 @@
 
 ---
 
-## 2. 完整分数表
+## 2. 总表：所有模型 × 所有条件 × 单次/+manager
 
-### 2.1 第一方 5-pass（§2.1–§2.3，Figure 1–3，**v2 脚手架**，128k cap，reasoning on）
+一张表列全。`±` 是**跨 pass 的标准差（SD）**；只跑 1 pass 的行没有离散度。
+Δ 为**逐 pass 配对差**的均值 ± SD（5-pass 行），或直接相减（1-pass 行）。
+所有分数取自 `.regraded.json`（修复后的 evaluator，§7.3）。
 
-| 模型 | Single | Manager | Δ | 每 pass Δ | 服务方 |
-|---|---|---|---|---|---|
-| Claude Fable 5 | **87.4 ± 1.1** | — | — | — | Anthropic |
-| GPT-5.6-Terra | 77.0 ± 1.0 | **85.0 ± 1.0** | **+8.0 ± 0.0** | +8, +8, +8, +8, +8 | OpenAI |
-| GPT-5.6-Luna | 67.2 ± 4.3 | **77.8 ± 2.0** | **+10.6 ± 5.1** | +17, +7, +13, +4, +12 | OpenAI |
-| Qwen3.8-27B | 63.0 ± 4.1 ᵃ | **86.4 ± 2.7** | **+23.4 ± 6.6** | +15, +20, +29, +22, +31 | 本地 vLLM |
+| 模型 | 参数 | 服务方 | 条件 | 脚手架 | 单次 | +manager | Δ | 论文位置 |
+|---|---|---|---|---|---|---|---|---|
+| GPT-5.6-Terra | n/a | OpenAI 第一方 | 128k · ON · ×5 | **v2** | 77.0 ± 1.0 | 85.0 ± 1.0 | **+8.0 ± 0.0** | §2.1–2.3 / Fig 1–3 |
+| GPT-5.6-Luna | n/a | OpenAI 第一方 | 128k · ON · ×5 | **v2** | 67.2 ± 4.3 | 77.8 ± 2.0 | **+10.6 ± 5.1** | §2.1–2.3 / Fig 1–3 |
+| Qwen3.8-27B | 27B | 本地 vLLM | 128k · ON · ×5 | **v2** | 63.0 ± 4.1 ᵃ | 86.4 ± 2.7 | **+23.4 ± 6.6** | §2.1–2.3 / Fig 1–3 |
+| Claude Fable 5 | n/a | Anthropic 第一方 | 128k · ON · ×5 | 无 | 87.4 ± 1.1 | — ᵇ | **—** | §2.1–2.3 / Fig 1–3 |
+| Claude Opus-5 | n/a | OpenRouter | 128k · ON · ×1 | v1 | 85 | 91 | **+6** | §2.4 / Fig 4 |
+| Kimi-K3 | ~2.8T | OpenRouter | 128k · ON · ×1 | v1 | 83 | 82 | **-1** | §2.4 / Fig 4 |
+| Minimax-M3 | 428B | OpenRouter | 128k · ON · ×1 | v1 | 60 | 66 | **+6** | §2.4 / Fig 4 |
+| Qwen3.6-35B-A3B | 35B | OpenRouter | 128k · ON · ×1 | v1 | 25 | 43 | **+18** | §2.4 / Fig 4 |
+| Claude Opus-5 | n/a | OpenRouter | 128k · OFF · ×1 | v1 | *(未跑)* ᶜ | *(未跑)* ᶜ | **—** | §2.4 / Fig 6 |
+| Kimi-K3 | ~2.8T | OpenRouter | 128k · OFF · ×1 | v1 | 32 | 74 | **+42** | §2.4 / Fig 6 |
+| Minimax-M3 | 428B | OpenRouter | 128k · OFF · ×1 | v1 | 25 | 37 | **+12** | §2.4 / Fig 6 |
+| Qwen3.6-35B-A3B | 35B | OpenRouter | 128k · OFF · ×1 | v1 | 35 | 26 | **-9** | §2.4 / Fig 6 |
+| Qwen3.5-9B | 9B | OpenRouter | 128k · OFF · ×1 | v1 | 17 | 20 | **+3** | §2.4 / Fig 6 |
+| Claude Opus-5 | n/a | OpenRouter | 16k · OFF · ×5 | v1 | *(未报告)* ᵈ | — | **—** | §2.4 / Fig 5 |
+| Kimi-K3 | ~2.8T | OpenRouter | 16k · OFF · ×5 | v1 | 32.2 ± 4.8 | 62.6 ± 2.9 | **+30.4 ± 5.9** | §2.4 / Fig 5 |
+| Minimax-M3 | 428B | OpenRouter | 16k · OFF · ×5 | v1 | 21.2 ± 1.5 | 32.2 ± 2.7 | **+11.0 ± 3.5** | §2.4 / Fig 5 |
+| Qwen3.6-35B-A3B | 35B | OpenRouter | 16k · OFF · ×5 | v1 | 27.8 ± 3.9 | 26.6 ± 1.8 | **-1.2 ± 4.9** | §2.4 / Fig 5 |
+| Qwen3.5-9B | 9B | OpenRouter | 16k · OFF · ×5 | v1 | 14.6 ± 0.5 | 21.8 ± 3.6 | **+7.2 ± 3.8** | §2.4 / Fig 5 |
 
-ᵃ Qwen3.8 的 manager 臂原生跑在 128k；single 臂生成于 250k，此列是 cap-match 回 128k 的重放（§3.2）。
-按 250k 原样计分是 `65.6 ± 4.6`，Δ = `+20.8 ± 7.0`。
+ᵃ Qwen3.8-27B 的 single 臂生成于 250k cap，此处是 **cap-match 回 128k 的重放**（§3.2），
+与其 128k 原生的 manager 臂 like-for-like。按 250k 原样计分为 `65.6 ± 4.6`，Δ = `+20.8 ± 7.0`。
 
-**逐 pass 原始值**（本次从 `.regraded.json` 重算，与论文一致）：
+ᵇ Fable 5 **只跑了单次臂**，没有 manager 臂（原因见 §4）。
+
+ᶜ Opus-5 的 `128k · OFF · ×1` 未跑：`opus_single.json` 内容是 `{"skipped": ...}`，
+所以 Figure 6 只有 4 个模型。
+
+ᵈ Opus-5 的 `16k · OFF · ×5`：p1–p3 为真实数据（67, 67, 68），**p4/p5 整批 100 题**
+**`code` 全为空、`passed` 全 False** —— 是跑挂了，不是 0 分。机械平均会得到误导性的
+`40.4 ± 36.9`。论文 Figure 5 只收 4 个模型（9B/35B/428B/2.8T），未报告 Opus，此处从之。
+
+ᵉ `nem_*`（Nemotron）在 16k 条件下有占位文件，内容是 `{"note": "nemotron removed"}` ——
+该模型被移除，无数据。
+
+ᶠ `luna_single.json`（无 `_p` 后缀）是一个 56.0 的孤立旧文件，无 regraded 孪生，
+非论文所用的 p1–p5，已排除。
+
+### 读表要点
+
+1. **上四行（v2，5-pass，pinned backend）是唯一互相严格可比的一组**，也是论文的主结果。
+   其余全是 v1 + OpenRouter，与之**既不同脚手架也不同服务路径**（§3）。
+2. **manager 不是稳赢**：Kimi-K3 在 128k·ON 下 −1，Qwen3.6-35B 在 128k·OFF 下 −9、
+   在 16k·OFF 下 −1.2。三次负 Δ 全部出现在 v1 上。
+3. **reasoning 关掉时 Δ 最大**：Kimi-K3 32→74（+42）。低预算/无思考时脚手架的
+   救援价值最高；模型本身越强、预算越宽，Δ 越小。这正是论文的核心论点。
+4. **16k 条件下的 Δ 大量来自"能否吐出代码"**，而非推理质量（§7.4）。
+
+### 逐 pass 原始值（5-pass 条件）
 
 ```
-terra_single      [78, 77, 78, 76, 76]  → 77.0
-terra_multiagent  [86, 85, 86, 84, 84]  → 85.0
-luna_single       [61, 69, 65, 72, 69]  → 67.2
-luna_multiagent   [78, 76, 78, 76, 81]  → 77.8
-q38_single.cap128k[68, 66, 59, 63, 59]  → 63.0
-q38_multiagent    [83, 86, 88, 85, 90]  → 86.4
-fable5_single     [86, 87, 87, 88, 89]  → 87.4
+terra_single       [78, 77, 78, 76, 76]   → 77.0
+terra_multiagent   [86, 85, 86, 84, 84]   → 85.0
+luna_single        [61, 69, 65, 72, 69]   → 67.2
+luna_multiagent    [78, 76, 78, 76, 81]   → 77.8
+q38_single.cap128k [68, 66, 59, 63, 59]   → 63.0
+q38_single (250k)  [71, 69, 60, 66, 62]   → 65.6
+q38_multiagent     [83, 86, 88, 85, 90]   → 86.4
+fable5_single      [86, 87, 87, 88, 89]   → 87.4
+kimi_single        [26, 30, 34, 39, 32]   → 32.2   (16k/OFF)
+kimi_multiagent    [64, 61, 67, 61, 60]   → 62.6   (16k/OFF)
+mm3_single         [21, 19, 23, 21, 22]   → 21.2   (16k/OFF)
+mm3_multiagent     [35, 31, 29, 35, 31]   → 32.2   (16k/OFF)
+q35_single         [29, 23, 33, 25, 29]   → 27.8   (16k/OFF)
+q35_multiagent     [29, 27, 24, 26, 27]   → 26.6   (16k/OFF)
+q9_single          [15, 14, 15, 14, 15]   → 14.6   (16k/OFF)
+q9_multiagent      [22, 22, 26, 23, 16]   → 21.8   (16k/OFF)
+opus_single        [67, 67, 68, ✗, ✗]     → 未报告 (16k/OFF, 见 ᵈ)
 ```
 
-### 2.2 OpenRouter 1-pass（§2.4，Figure 4，**v1 脚手架**，128k cap，reasoning on）
-
-| 模型 | Single | Manager | Δ | 非空完成 s→m |
-|---|---|---|---|---|
-| **Opus-5** | **85** | **91** | **+6** | 97 → 100 |
-| Kimi-K3 | 83 | 82 | −1 | 97 → 100 |
-| Minimax-M3 | 60 | 66 | +6 | 92 → 93 |
-| Qwen3.6-35B-A3B | 25 | 43 | +18 | 34 → 68 |
-
-文件：`runs/128k-reasoning-on-1pass/results/{opus,kimi,mm3,q35}_{single,multiagent}.regraded.json`
-（`runs/results_think_high/` 是指向同一批的 symlink。）
-
-注意 Kimi-K3 的 Δ 是**负的**，manager 并非总是有益。
-
-### 2.3 成本（§2.2，Table 3；仅覆盖 §2.1 的第一方 arm，§2.4 未计价）
+### 成本（§2.2，Table 3；仅覆盖 §2.1 的第一方 arm，§2.4 未计价）
 
 | Arm | 费率 $/MTok in/out | In (MTok) | Out (MTok) | $/pass | $/solved |
 |---|---|---|---|---|---|
