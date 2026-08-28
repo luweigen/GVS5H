@@ -63,6 +63,13 @@
 | Qwen3.6-35B-A3B | 35B | OpenRouter | 16k · OFF · ×5 | v1 | 27.8 ± 3.9 | 26.6 ± 1.8 | **-1.2 ± 4.9** | §2.4 / Fig 5 |
 | Qwen3.5-9B | 9B | OpenRouter | 16k · OFF · ×5 | v1 | 14.6 ± 0.5 | 21.8 ± 3.6 | **+7.2 ± 3.8** | §2.4 / Fig 5 |
 
+**Claude Code 作为 agent 的那一批 —— 代码已注册，但本仓库不含任何结果：**
+
+| 模型 | 参数 | 服务方 | 条件 | 脚手架 | 单次 | +agent | Δ | 论文位置 |
+|---|---|---|---|---|---|---|---|---|
+| 真 Claude (`claude-real-*`) | n/a | 订阅 OAuth | LCB 官方 harness | **Claude Code CLI** | *(无数据)* ᵍ | *(无数据)* ᵍ | **—** | 未收录 |
+| Qwen3.6-27B (`claude-code-qwen3.6-vllm`) | 27B | litellm 代理 :8216 | LCB 官方 harness | **Claude Code CLI** | — ʰ | *(无数据)* ᵍ | **—** | 未收录 |
+
 ᵃ Qwen3.8-27B 的 single 臂生成于 250k cap，此处是 **cap-match 回 128k 的重放**（§3.2），
 与其 128k 原生的 manager 臂 like-for-like。按 250k 原样计分为 `65.6 ± 4.6`，Δ = `+20.8 ± 7.0`。
 
@@ -80,6 +87,28 @@
 
 ᶠ `luna_single.json`（无 `_p` 后缀）是一个 56.0 的孤立旧文件，无 regraded 孪生，
 非论文所用的 p1–p5，已排除。
+
+ᵍ **这三个 arm 一次都没进过本仓库。** `lm_styles.py:69-88` 注册了 `claude-real-single`、
+`claude-real-agentic`、`claude-code-qwen3.6-vllm`，`claude_code_runner.py` 也完整实现了，
+但穷举检索结果为零：全仓库无任何结果文件；所有 `runs/*/results/*.json` 的 `model` 字段
+只出现 9 个值（见下），没有一个是 Claude Code 路径；`runs/*/ws/` 的子目录只有
+`{kimi,mm3,q35,q9,opus,luna,terra,q38,fable5}_{single,multiagent}[_pN]`；
+`git log --all --name-only | grep -i claude` 在**全部历史**中只返回三个 `.py` 源文件，
+没有任何数据路径。README §5 说明原因：`LiveCodeBench/output/` 与 `claude_transcripts/`
+（~177 MB）属于**另一个实验**，与本论文不共享数据，打包时排除。
+
+仓库中出现过的全部 9 个 `model` 值：
+```
+anthropic:claude-fable-5          openrouter:anthropic/claude-opus-5
+openai:gpt-5.6-terra              openrouter:moonshotai/kimi-k3
+openai:gpt-5.6-luna               openrouter:minimax/minimax-m3
+groq:small-model  (= Qwen3.8-27B) openrouter:qwen/qwen3.6-35b-a3b
+                                  openrouter:qwen/qwen3.5-9b
+```
+
+ʰ `claude-code-qwen3.6-vllm` 只注册了 agent 形态（`LCB_CLAUDE_MODE` 默认 `agentic`）；
+它的"单次"对照位由 `qwen3.6-27b-vllm`（`LMStyle.OpenAIChat`，直连同一个 litellm 代理）承担，
+同样无结果数据。另注：`LCB_CLAUDE_MODEL` 若不设，真 Claude 那条路默认 `sonnet`。
 
 ### 读表要点
 
