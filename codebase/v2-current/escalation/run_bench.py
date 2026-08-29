@@ -155,6 +155,11 @@ def run_lcb(n, ids_file):
     records = [{"question_id": p.question_id, "code": c, "status": s.get("class"),
                 "finish_reason": s.get("finish_reason"), "completion_tokens": s.get("completion_tokens"),
                 "truncated_calls": s.get("truncated_calls"), "n_calls": s.get("n_calls"),
+                # ccagent only: a denied tool call means the agent was prevented from
+                # acting, so the row is not that agent layer's real output. Persisted so a
+                # driver can refuse the pass instead of quietly reporting a crippled arm.
+                "permission_denied": s.get("permission_denied"),
+                "total_cost_usd": s.get("total_cost_usd"),
                 # workspace holding this problem's transcript.jsonl (full prompts, responses
                 # and thinking) -- without it, linking a row back to its calls means
                 # recomputing md5(prompt) by hand.
@@ -553,7 +558,8 @@ def main():
     ap.add_argument("--ids-file", default=os.path.join(ROOT, "hard100.json"))
     ap.add_argument("--out", default=os.path.join(HERE, "results.json"))
     ap.add_argument("--only", choices=["lcb", "aime", "math500", "gpqa", "hle"], default=None)
-    ap.add_argument("--engine", choices=["escalate", "multiagent", "single"], default="escalate")
+    ap.add_argument("--engine", choices=["escalate", "multiagent", "single", "ccagent"],
+                    default="escalate")
     ap.add_argument("--parallel", type=int, default=PARALLEL, help="# problems solved concurrently")
     args = ap.parse_args()
     PARALLEL = args.parallel
@@ -567,6 +573,16 @@ def main():
         SOLVE = single_solve
         log(f"Engine: single-shot  model={MODEL}")
         out = {"engine": "single", "model": MODEL}
+    elif args.engine == "ccagent":
+        # Claude Code's own agent loop, as the counterpart to `multiagent`: same problems,
+        # same task framing, same grading -- a different agent layer. See ccagent.py.
+        from ccagent import (ccagent_solve, preflight, MODEL as CC_MODEL, TOOLS,
+                             WALL_SECONDS)
+        preflight()
+        SOLVE = ccagent_solve
+        log(f"Engine: ccagent (claude -p loop)  model={CC_MODEL}  tools={TOOLS}  "
+            f"wall={WALL_SECONDS}s")
+        out = {"engine": "ccagent", "model": f"claude-code:{CC_MODEL}", "tools": TOOLS}
     else:
         log(f"Engine: escalate  ladder={LADDER}")
         out = {"engine": "escalate", "ladder": LADDER}
